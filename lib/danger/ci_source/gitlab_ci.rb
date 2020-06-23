@@ -1,5 +1,6 @@
 # http://docs.gitlab.com/ce/ci/variables/README.html
 require "uri"
+require "danger/request_sources/github/github"
 require "danger/request_sources/gitlab"
 
 module Danger
@@ -15,7 +16,12 @@ module Danger
   # ```
   # ### Token Setup
   #
-  # Add the `DANGER_GITLAB_API_TOKEN` to your pipeline env variables.
+  # Add the `DANGER_GITLAB_API_TOKEN` to your pipeline env variables if you
+  # are hosting your code on Gitlab. If you are using Gitlab as a mirror
+  # for the purpose of CI/CD, while hosting your repo on Github, set the
+  # `DANGER_GITHUB_API_TOKEN` as well as the project repo URL to
+  # `DANGER_PROJECT_REPO_URL`.
+
   class GitLabCI < CI
     attr_reader :project_url
 
@@ -28,11 +34,12 @@ module Danger
         "GITLAB_CI", "CI_PROJECT_PATH"
       ].all? { |x| env[x] }
 
-      exists && determine_merge_request_id(env).to_i > 0
+      exists && determine_pull_or_merge_request_id(env).to_i > 0
     end
 
-    def self.determine_merge_request_id(env)
+    def self.determine_pull_or_merge_request_id(env)
       return env["CI_MERGE_REQUEST_IID"] if env["CI_MERGE_REQUEST_IID"]
+      return env["CI_EXTERNAL_PULL_REQUEST_IID"] if env["CI_EXTERNAL_PULL_REQUEST_IID"]
       return 0 unless env["CI_COMMIT_SHA"]
 
       project_path = env["CI_MERGE_REQUEST_PROJECT_PATH"] || env["CI_PROJECT_PATH"]
@@ -54,16 +61,29 @@ module Danger
 
     def initialize(env)
       @env = env
-      @repo_slug = env["CI_MERGE_REQUEST_PROJECT_PATH"] || env["CI_PROJECT_PATH"]
-      @project_url = env["CI_MERGE_REQUEST_PROJECT_URL"] || env["CI_PROJECT_URL"]
+      @repo_slug = slug_from(env)
+      @project_url = env["DANGER_PROJECT_REPO_URL"] || env["CI_MERGE_REQUEST_PROJECT_URL"] || env["CI_PROJECT_URL"]
     end
 
     def supported_request_sources
-      @supported_request_sources ||= [Danger::RequestSources::GitLab]
+      @supported_request_sources ||= [
+        Danger::RequestSources::GitHub,
+        Danger::RequestSources::GitLab
+      ]
     end
 
     def pull_request_id
-      @pull_request_id ||= self.class.determine_merge_request_id(@env)
+      @pull_request_id ||= self.class.determine_pull_or_merge_request_id(@env)
+    end
+
+    private
+
+    def slug_from(env)
+      if env["DANGER_PROJECT_REPO_URL"]
+        env["DANGER_PROJECT_REPO_URL"].split('/').last(2).join('/')
+      else
+        env["CI_MERGE_REQUEST_PROJECT_PATH"] || env["CI_PROJECT_PATH"]
+      end
     end
   end
 end
